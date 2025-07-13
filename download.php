@@ -1,45 +1,67 @@
 <?php
-// Получаем массив файлов из базы данных (database.json)
-$array = json_decode(file_get_contents("database.json"), true);
-
-// Ищем индекс файла по имени, переданному в параметре 'filename'
-$index = array_search($_REQUEST['filename'], array_column($array, 'filename'));
-
-// Если файл не найден, возвращаем 404
-if ($index === false) {
-    http_response_code(404);
-    echo "Файл не найден!";
-    exit;
-}
-
-// Формируем полный путь к файлу
-$filename = __DIR__ . DIRECTORY_SEPARATOR . 'upload' . DIRECTORY_SEPARATOR . $array[$index]['filename'];
-
-/**
- * Функция для скачивания файла
- * @param string $filename - полный путь к файлу
- */
-function download($filename)
+$request = $_REQUEST['filename'];
+require_once('config.php');
+require_once('functions.php');
+function get_ip()
 {
-    // Открываем файл для чтения в бинарном режиме
-    $fp = fopen($filename, 'rb');
+    $ip = '';
+    if (!empty($_SERVER['HTTP_CLIENT_IP'])) {
+        $ip = $_SERVER['HTTP_CLIENT_IP'];
+    } elseif (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+        $ip = $_SERVER['HTTP_X_FORWARDED_FOR'];
+    } elseif (!empty($_SERVER['REMOTE_ADDR'])) {
+        $ip = $_SERVER['REMOTE_ADDR'];
+    }
 
-    // Отправляем заголовки для скачивания файла
-    header("Content-Type: " . mime_content_type($filename));
-    header("Content-Length: " . filesize($filename));
-    header('Content-Disposition: attachment; filename="' . basename($filename) . '"');
-
-    // Выводим содержимое файла и завершаем скрипт
-    fpassthru($fp);
-    exit;
+    return $ip;
 }
+
+$ip = get_ip();
+
+
+
+$conn = new mysqli($servername, $username, $password, $dbname);
+if ($conn->connect_error) {
+    die("Ошибка: " . $conn->connect_error);
+}
+$find = "SELECT * from files where filename = '$request'";
+$res = $conn->query($find);
+if ($res) {
+    $row = $res->fetch_assoc();
+    if (!$row) {
+        Return_Error("Файл не найден");
+    }
+} else {
+    Return_Error("Файл не найден");
+}
+
+$filename = __DIR__ . DIRECTORY_SEPARATOR . 'upload' . DIRECTORY_SEPARATOR . $row['filename'];
+
+$id = $row["id"];
+
+$upload_date = date('Y-m-d H:i:s');
+
+$stat_upload = "INSERT INTO `statistic_of_downloads` (`id`, `download_date`, `IP_address`) VALUES ($id, '$upload_date', '$ip')";
 
 // Проверяем, защищён ли файл паролем
-if (isset($array[$index]['password']) && !empty($array[$index]['password'])) {
+if ($row['password'] === null) {
+    // Если пароль не требуется, скачиваем файл
+    if ($conn->query($stat_upload)) {
+        echo "stat is send";
+    } else {
+        echo "Ошибка: " . $conn->error;
+    }
+    download($filename);
+} else {
     // Получаем пароль из запроса
     $password = $_REQUEST['password'] ?? '';
     // Сравниваем пароли
-    if ($array[$index]['password'] === $password) {
+    if ($row['password'] === $password) {
+        if ($conn->query($stat_upload)) {
+            echo "stat is send";
+        } else {
+            echo "Ошибка: " . $conn->error;
+        }
         download($filename);
     } else {
         // Если пароль неверный, возвращаем 403
@@ -47,7 +69,6 @@ if (isset($array[$index]['password']) && !empty($array[$index]['password'])) {
         echo "Доступ запрещён!";
         exit;
     }
-} else {
-    // Если пароль не требуется, скачиваем файл
-    download($filename);
 }
+
+$conn->close();
